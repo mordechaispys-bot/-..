@@ -1,0 +1,6 @@
+{
+  "name": "Python Studio",
+  "description": "סביבת פיתוח והרצה של קוד פייתון אמיתי ישירות על הנייד כולל גרפיקה, קנווס משחקים, התקנת ספריות ועוזר בינה מלאכותית סמארט",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #121318;
+      color: #e3e2e6;
+      font-family: monospace;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    #output-container {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+    }
+    /* Styles for the canvas which can run games and drawings */
+    #canvas {
+      background-color: #1e1f22;
+      border: 1px solid #3c3f41;
+      border-radius: 8px;
+      max-width: 95%;
+      max-height: 95%;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      display: none; /* Shown only when drawings are active */
+    }
+    #plot-container {
+      max-width: 95%;
+      max-height: 95%;
+      display: none;
+      background-color: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    #loading {
+      font-size: 14px;
+      color: #9cdcfe;
+      text-align: center;
+      padding: 20px;
+    }
+    #status {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      font-size: 11px;
+      color: #808080;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
+</head>
+<body>
+  <div id="output-container">
+    <div id="loading">מפעיל מנוע פייתון...</div>
+    <canvas id="canvas" width="400" height="400"></canvas>
+    <div id="plot-container"></div>
+  </div>
+  <div id="status">סטטוס מנוע: בהכנה...</div>
+
+  <script>
+    let pyodide = null;
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const plotContainer = document.getElementById('plot-container');
+    const loadingDiv = document.getElementById('loading');
+    const statusDiv = document.getElementById('status');
+    
+    // Status reporting
+    function updateStatus(msg) {
+      statusDiv.innerText = "סטטוס: " + msg;
+      if (window.AndroidBridge) {
+        window.AndroidBridge.updateStatus(msg);
+      }
+    }
+
+    function logToAndroid(text, isError = false) {
+      if (window.AndroidBridge) {
+        window.AndroidBridge.log(text, isError);
+      } else {
+        console.log(text);
+      }
+    }
+
+    // Touch support - standard mouse/touch events sent to python
+    let pyOnTouchStart = null;
+    let pyOnTouchMove = null;
+    let pyOnTouchEnd = null;
+
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (pyOnTouchStart) pyOnTouchStart(x, y);
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (pyOnTouchMove) pyOnTouchMove(x, y);
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      if (pyOnTouchEnd) pyOnTouchEnd();
+    });
+
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (e.touches.length > 0) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.touches[0].clientX - rect.left;
+        const y = e.touches[0].clientY - rect.top;
+        if (pyOnTouchStart) pyOnTouchStart(x, y);
+      }
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (e.touches.length > 0) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.touches[0].clientX - rect.left;
+        const y = e.touches[0].clientY - rect.top;
+        if (pyOnTouchMove) pyOnTouchMove(x, y);
+      }
+    });
+
+    canvas.addEventListener('touchend', () => {
+      if (pyOnTouchEnd) pyOnTouchEnd();
+    });
+
+    // Initialize Pyodide
+    async function initPyodide() {
+      try {
+        updateStatus("טוען Wasm...");
+        pyodide = await loadPyodide({
+          stdout: (text) => logToAndroid(text + "\n", false),
+          stderr: (text) => logToAndroid(text + "\n", true)
+        });
+        
+        updateStatus("מנוע פייתון מוכן");
+        loadingDiv.style.display = 'none';
+        
+        // Expose JavaScript canvas routines directly to Python
+        // Setting up a basic standard drawing module in Pyodide
+        pyodide.registerJsModule("js_canvas", {
+          cls: () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.style.display = 'block';
+            plotContainer.style.display = 'none';
+          },
+          rect: (x, y, w, h, color, fill = true) => {
+            ctx.fillStyle = color || '#ffffff';
+            ctx.strokeStyle = color || '#ffffff';
+            if (fill) {
+              ctx.fillRect(x, y, w, h);
+            } else {
+              ctx.strokeRect(x, y, w, h);
+            }
+          },
+          circle: (x, y, r, color, fill = true) => {
+            ctx.fillStyle = color || '#ffffff';
+            ctx.strokeStyle = color || '#ffffff';
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, 2 * Math.PI);
+            if (fill) {
+              ctx.fill();
+            } else {
+              ctx.stroke();
+            }
+          },
+          line: (x1, y1, x2, y2, color, width = 1) => {
+            ctx.strokeStyle = color || '#ffffff';
+            ctx.lineWidth = width;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+          },
+          text: (str, x, y, font, color) => {
+            ctx.fillStyle = color || '#ffffff';
+            ctx.font = font || '16px sans-serif';
+            ctx.fillText(str, x, y);
+          },
+          setSize: (w, h) => {
+            canvas.width = w;
+            canvas.height = h;
+            canvas.style.display = 'block';
+            plotContainer.style.display = 'none';
+          },
+          register_touch: (start, move, end) => {
+            pyOnTouchStart = start;
+            pyOnTouchMove = move;
+            pyOnTouchEnd = end;
+          }
+        });
+
+        // Redirect input() Python prompt to Android Bridge (Kotlin dialog/text input)
+        pyodide.runPython(`
+import sys
+import builtins
+import js_canvas
+
+def custom_input(prompt=""):
+    if prompt:
+        print(prompt, end="")
+    val = ""
+    try:
+        from js import AndroidBridge
+        val = AndroidBridge.requestInput(prompt)
+    except Exception as e:
+        val = "android_input_error"
+    return val
+
+builtins.input = custom_input
+        `);
+
+        logToAndroid("מנוע פייתון פעיל ומחובר!\nמוכן להרצת קוד.\n");
+        if (window.AndroidBridge) {
+          window.AndroidBridge.onEngineLoaded();
+        }
+      } catch (err) {
+        logToAndroid("טעינת המנוע נכשלה: " + err.message + "\n", true);
+        updateStatus("נכשל: " + err.message);
+      }
+    }
+
+    // Call runPython on click of execute
+    async function runPythonCode(code, filesListJson = "[]") {
+      if (!pyodide) {
+        logToAndroid("המנוע עדיין נטען, המתן בבקשה...\n", true);
+        return;
+      }
+      
+      try {
+        updateStatus("מריץ...");
+        
+        // Write multi-files workspace
+        try {
+          const files = JSON.parse(filesListJson);
+          for (const file of files) {
+            pyodide.FS.writeFile(file.name, file.content, { encoding: 'utf8' });
+          }
+        } catch (fileErr) {
+          console.error("Error writing files: " + fileErr);
+        }
+        
+        // Execute python code!
+        const result = await pyodide.runPythonAsync(code);
+        
+        updateStatus("ההרצה הסתיימה בהצלחה");
+        if (window.AndroidBridge) {
+          window.AndroidBridge.onExecutionCompleted(result ? result.toString() : "");
+        }
+      } catch (err) {
+        logToAndroid(err.message + "\n", true);
+        updateStatus("שגיאת הרצה");
+        if (window.AndroidBridge) {
+          window.AndroidBridge.onExecutionFailed(err.message);
+        }
+      }
+    }
+
+    // Micropip installer helper to run micropip.install
+    async function installPackage(packageName) {
+      if (!pyodide) {
+        logToAndroid("המנוע אינו מוכן להתקנת ספריות עדיין.\n", true);
+        return;
+      }
+      try {
+        updateStatus("מתקין את " + packageName + "...");
+        logToAndroid("מכין את מתקין הספריות הווירטואלי Micropip...\n");
+        
+        await pyodide.loadPackage("micropip");
+        const micropip = pyodide.pyimport("micropip");
+        
+        logToAndroid("מוריד ומתקין תלויות עבור: " + packageName + "...\n");
+        await micropip.install(packageName);
+        
+        logToAndroid("הספרייה " + packageName + " הותקנה בהצלחה!\n");
+        updateStatus("מנוע מוכן");
+        
+        if (window.AndroidBridge) {
+          window.AndroidBridge.onPackageInstalled(packageName, true, "");
+        }
+      } catch (err) {
+        logToAndroid("התקנת הספרייה נכשלה. שגיאה: " + err.message + "\n", true);
+        updateStatus("התקנה נכשלה");
+        
+        if (window.AndroidBridge) {
+          window.AndroidBridge.onPackageInstalled(packageName, false, err.message);
+        }
+      }
+    }
+
+    initPyodide();
+  </script>
+</body>
+</html>
