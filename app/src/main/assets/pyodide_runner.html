@@ -59,7 +59,6 @@
       color: #808080;
     }
   </style>
-  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
 </head>
 <body>
   <div id="output-container">
@@ -140,74 +139,89 @@
       if (pyOnTouchEnd) pyOnTouchEnd();
     });
 
-    // Initialize Pyodide
-    async function initPyodide() {
-      try {
-        updateStatus("טוען Wasm...");
-        pyodide = await loadPyodide({
-          stdout: (text) => logToAndroid(text + "\n", false),
-          stderr: (text) => logToAndroid(text + "\n", true)
-        });
-        
-        updateStatus("מנוע פייתון מוכן");
-        loadingDiv.style.display = 'none';
-        
-        // Expose JavaScript canvas routines directly to Python
-        // Setting up a basic standard drawing module in Pyodide
-        pyodide.registerJsModule("js_canvas", {
-          cls: () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            canvas.style.display = 'block';
-            plotContainer.style.display = 'none';
-          },
-          rect: (x, y, w, h, color, fill = true) => {
-            ctx.fillStyle = color || '#ffffff';
-            ctx.strokeStyle = color || '#ffffff';
-            if (fill) {
-              ctx.fillRect(x, y, w, h);
-            } else {
-              ctx.strokeRect(x, y, w, h);
-            }
-          },
-          circle: (x, y, r, color, fill = true) => {
-            ctx.fillStyle = color || '#ffffff';
-            ctx.strokeStyle = color || '#ffffff';
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, 2 * Math.PI);
-            if (fill) {
-              ctx.fill();
-            } else {
-              ctx.stroke();
-            }
-          },
-          line: (x1, y1, x2, y2, color, width = 1) => {
-            ctx.strokeStyle = color || '#ffffff';
-            ctx.lineWidth = width;
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
-          },
-          text: (str, x, y, font, color) => {
-            ctx.fillStyle = color || '#ffffff';
-            ctx.font = font || '16px sans-serif';
-            ctx.fillText(str, x, y);
-          },
-          setSize: (w, h) => {
-            canvas.width = w;
-            canvas.height = h;
-            canvas.style.display = 'block';
-            plotContainer.style.display = 'none';
-          },
-          register_touch: (start, move, end) => {
-            pyOnTouchStart = start;
-            pyOnTouchMove = move;
-            pyOnTouchEnd = end;
-          }
-        });
+    // Dynamic CDN failover and local/offline simulation helper
+    const cdns = [
+      "https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/pyodide/0.26.1/pyodide.js",
+      "https://unpkg.com/pyodide@0.26.1/pyodide.js"
+    ];
+    let cdnIndex = 0;
+    let offlineEngineActive = false;
 
-        // Redirect input() Python prompt to Android Bridge (Kotlin dialog/text input)
-        pyodide.runPython(`
+    function loadCdnScript(onSuccess, onFailure) {
+      if (cdnIndex >= cdns.length) {
+        onFailure();
+        return;
+      }
+      const u = cdns[cdnIndex++];
+      updateStatus("טוען תשתית משרת #" + cdnIndex + "...");
+      const script = document.createElement('script');
+      script.src = u;
+      script.onload = onSuccess;
+      script.onerror = () => {
+        console.error("CORS / Network fail for CDN: " + u);
+        loadCdnScript(onSuccess, onFailure);
+      };
+      document.head.appendChild(script);
+    }
+
+    function setupPythonCanvas() {
+      // Expose JavaScript canvas routines directly to Python
+      // Setting up a basic standard drawing module in Pyodide
+      pyodide.registerJsModule("js_canvas", {
+        cls: () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          canvas.style.display = 'block';
+          plotContainer.style.display = 'none';
+        },
+        rect: (x, y, w, h, color, fill = true) => {
+          ctx.fillStyle = color || '#ffffff';
+          ctx.strokeStyle = color || '#ffffff';
+          if (fill) {
+            ctx.fillRect(x, y, w, h);
+          } else {
+            ctx.strokeRect(x, y, w, h);
+          }
+        },
+        circle: (x, y, r, color, fill = true) => {
+          ctx.fillStyle = color || '#ffffff';
+          ctx.strokeStyle = color || '#ffffff';
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, 2 * Math.PI);
+          if (fill) {
+            ctx.fill();
+          } else {
+            ctx.stroke();
+          }
+        },
+        line: (x1, y1, x2, y2, color, width = 1) => {
+          ctx.strokeStyle = color || '#ffffff';
+          ctx.lineWidth = width;
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        },
+        text: (str, x, y, font, color) => {
+          ctx.fillStyle = color || '#ffffff';
+          ctx.font = font || '16px sans-serif';
+          ctx.fillText(str, x, y);
+        },
+        setSize: (w, h) => {
+          canvas.width = w;
+          canvas.height = h;
+          canvas.style.display = 'block';
+          plotContainer.style.display = 'none';
+        },
+        register_touch: (start, move, end) => {
+          pyOnTouchStart = start;
+          pyOnTouchMove = move;
+          pyOnTouchEnd = end;
+        }
+      });
+
+      // Redirect input() Python prompt to Android Bridge (Kotlin dialog/text input)
+      pyodide.runPython(`
 import sys
 import builtins
 import js_canvas
@@ -224,22 +238,217 @@ def custom_input(prompt=""):
     return val
 
 builtins.input = custom_input
-        `);
+      `);
+    }
 
-        logToAndroid("מנוע פייתון פעיל ומחובר!\nמוכן להרצת קוד.\n");
-        if (window.AndroidBridge) {
-          window.AndroidBridge.onEngineLoaded();
-        }
-      } catch (err) {
-        logToAndroid("טעינת המנוע נכשלה: " + err.message + "\n", true);
-        updateStatus("נכשל: " + err.message);
+    function activateOfflineFallback(reason) {
+      offlineEngineActive = true;
+      pyodide = { isOfflineFallback: true };
+      updateStatus("חיבור אופליין - סימולטור פעיל");
+      loadingDiv.style.display = 'none';
+      logToAndroid("⚠️ מנוע פייתון פועל כעת במצב אופליין סימולטיבי (" + reason + ")\nניתן להריץ קוד, הדפסות ופקודות קנבס בסיסיות ללא צורך ברשת!\n\n");
+      if (window.AndroidBridge) {
+        window.AndroidBridge.onEngineLoaded();
       }
+    }
+
+    // Experimental Offline Python Interpreter Simulator
+    function runOfflineInterpreter(code) {
+      try {
+        updateStatus("מריץ...");
+        logToAndroid(">>> הרצת קוד במצב סימולציה אופליין <<<\n", false);
+        
+        const lines = code.split('\n');
+        const variables = {
+          'True': true,
+          'False': false,
+          'None': null
+        };
+        
+        // Expose simple math
+        variables['math'] = {
+          'sin': (x) => Math.sin(x),
+          'cos': (x) => Math.cos(x),
+          'tan': (x) => Math.tan(x),
+          'pi': Math.PI
+        };
+
+        // Reset canvas for execution
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        for (let idx = 0; idx < lines.length; idx++) {
+          let line = lines[idx].trim();
+          if (!line || line.startsWith('#')) continue;
+          
+          // Print logic
+          if (line.startsWith('print(') && line.endsWith(')')) {
+            const expr = line.substring(6, line.length - 1);
+            const val = evalPythonExpr(expr, variables);
+            logToAndroid(val + "\n", false);
+            continue;
+          }
+          
+          // js_canvas command parsing
+          if (line.startsWith('js_canvas.')) {
+            const dotIdx = line.indexOf('.');
+            const lp = line.indexOf('(');
+            const rp = line.lastIndexOf(')');
+            if (lp !== -1 && rp !== -1) {
+              const methodName = line.substring(dotIdx + 1, lp).trim();
+              const argsStr = line.substring(lp + 1, rp);
+              
+              // split args correctly
+              const args = argsStr.split(',').map(arg => evalPythonExpr(arg.trim(), variables));
+              
+              if (methodName === 'cls') {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                canvas.style.display = 'block';
+                plotContainer.style.display = 'none';
+              } else if (methodName === 'rect') {
+                ctx.fillStyle = args[4] || '#ffffff';
+                ctx.strokeStyle = args[4] || '#ffffff';
+                const fill = args[5] !== false;
+                if (fill) {
+                  ctx.fillRect(args[0] || 0, args[1] || 0, args[2] || 100, args[3] || 100);
+                } else {
+                  ctx.strokeRect(args[0] || 0, args[1] || 0, args[2] || 100, args[3] || 100);
+                }
+                canvas.style.display = 'block';
+              } else if (methodName === 'circle') {
+                ctx.fillStyle = args[3] || '#ffffff';
+                ctx.strokeStyle = args[3] || '#ffffff';
+                const fill = args[4] !== false;
+                ctx.beginPath();
+                ctx.arc(args[0] || 200, args[1] || 200, args[2] || 10, 0, 2 * Math.PI);
+                if (fill) {
+                  ctx.fill();
+                } else {
+                  ctx.stroke();
+                }
+                canvas.style.display = 'block';
+              } else if (methodName === 'line') {
+                ctx.strokeStyle = args[4] || '#ffffff';
+                ctx.lineWidth = args[5] || 1;
+                ctx.beginPath();
+                ctx.moveTo(args[0], args[1]);
+                ctx.lineTo(args[2], args[3]);
+                ctx.stroke();
+                canvas.style.display = 'block';
+              } else if (methodName === 'setSize') {
+                canvas.width = args[0] || 400;
+                canvas.height = args[1] || 400;
+                canvas.style.display = 'block';
+              }
+            }
+            continue;
+          }
+
+          // Simple assignment logic (e.g., x = 10)
+          if (line.includes('=')) {
+            const eqIdx = line.indexOf('=');
+            const varName = line.substring(0, eqIdx).trim();
+            const expr = line.substring(eqIdx + 1).trim();
+            
+            // Ensure valid name
+            if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(varName)) {
+              variables[varName] = evalPythonExpr(expr, variables);
+            }
+            continue;
+          }
+        }
+        
+        updateStatus("ההרצה הסתיימה בהצלחה");
+        if (window.AndroidBridge) {
+          window.AndroidBridge.onExecutionCompleted("");
+        }
+      } catch (e) {
+        logToAndroid("שגיאת הרצה אופליין: " + e.message + "\n", true);
+        updateStatus("שגיאת הרצה");
+        if (window.AndroidBridge) {
+          window.AndroidBridge.onExecutionFailed(e.message);
+        }
+      }
+    }
+
+    function evalPythonExpr(expr, vars) {
+      expr = expr.trim();
+      if (!expr) return undefined;
+      
+      // string literal
+      if ((expr.startsWith('"') && expr.endsWith('"')) || (expr.startsWith("'") && expr.endsWith("'"))) {
+        return expr.substring(1, expr.length - 1);
+      }
+      
+      // numbers
+      if (!isNaN(expr)) {
+        return Number(expr);
+      }
+      
+      // registered variables
+      if (vars[expr] !== undefined) {
+        return vars[expr];
+      }
+      
+      // mathematical calculations safely
+      try {
+        let jsExpr = expr;
+        jsExpr = jsExpr.replace(/math\.sin/g, "Math.sin");
+        jsExpr = jsExpr.replace(/math\.cos/g, "Math.cos");
+        jsExpr = jsExpr.replace(/math\.pi/g, "Math.PI");
+        
+        for (const [key, value] of Object.entries(vars)) {
+          if (typeof value === 'number' || typeof value === 'boolean') {
+            const regex = new RegExp('\\b' + key + '\\b', 'g');
+            jsExpr = jsExpr.replace(regex, value);
+          }
+        }
+        
+        const evalFn = new Function('return ' + jsExpr);
+        return evalFn();
+      } catch (err) {
+        return expr;
+      }
+    }
+
+    // Initialize Pyodide with fallbacks
+    async function initPyodide() {
+      loadCdnScript(
+        async () => {
+          try {
+            updateStatus("מפעיל Wasm...");
+            pyodide = await loadPyodide({
+              stdout: (text) => logToAndroid(text + "\n", false),
+              stderr: (text) => logToAndroid(text + "\n", true)
+            });
+            
+            updateStatus("מנוע פייתון מוכן");
+            loadingDiv.style.display = 'none';
+            setupPythonCanvas();
+            
+            logToAndroid("מנוע פייתון פעיל ומחובר!\nמוכן להרצת קוד.\n");
+            if (window.AndroidBridge) {
+              window.AndroidBridge.onEngineLoaded();
+            }
+          } catch (err) {
+            console.error(err);
+            activateOfflineFallback("שגיאת Wasm: " + err.message);
+          }
+        },
+        () => {
+          activateOfflineFallback("אין חיבור רשת");
+        }
+      );
     }
 
     // Call runPython on click of execute
     async function runPythonCode(code, filesListJson = "[]") {
       if (!pyodide) {
         logToAndroid("המנוע עדיין נטען, המתן בבקשה...\n", true);
+        return;
+      }
+      
+      if (offlineEngineActive) {
+        runOfflineInterpreter(code);
         return;
       }
       
@@ -274,8 +483,8 @@ builtins.input = custom_input
 
     // Micropip installer helper to run micropip.install
     async function installPackage(packageName) {
-      if (!pyodide) {
-        logToAndroid("המנוע אינו מוכן להתקנת ספריות עדיין.\n", true);
+      if (!pyodide || offlineEngineActive) {
+        logToAndroid("המנוע אינו תומך בהתקנת ספריות כעת.\n", true);
         return;
       }
       try {

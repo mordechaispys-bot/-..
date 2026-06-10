@@ -73,18 +73,59 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Custom Colors for Cyberpunk Tech Dark Theme
+// Custom Dynamic Theme Styling Engine
+enum class ThemeStyle(
+    val nameHeb: String,
+    val deepSlate: Color,
+    val panelDark: Color,
+    val borderDark: Color,
+    val neonTeal: Color,
+    val logoBlue: Color,
+    val codeYellow: Color,
+    val errRed: Color,
+    val cardBackground: Color,
+    val textLight: Color,
+    val textMuted: Color
+) {
+    NEON_TEAL(
+        "ניאון מדעי בדיוני",
+        Color(0xFF0F1015), Color(0xFF16171F), Color(0xFF2E313D), Color(0xFF00FFCC),
+        Color(0xFF457B9D), Color(0xFFFFD166), Color(0xFFFF5C5C), Color(0xFF222531),
+        Color(0xFFE2E4E9), Color(0xFF9095A6)
+    ),
+    MATRIX_GREEN(
+        "מטריקס ירוק",
+        Color(0xFF070907), Color(0xFF0B100C), Color(0xFF1B261D), Color(0xFF39FF14),
+        Color(0xFF4EAE5A), Color(0xFF98FB98), Color(0xFFFF5151), Color(0xFF121B14),
+        Color(0xFFE0EFE0), Color(0xFF8B9E8F)
+    ),
+    CYBER_SAKURA(
+        "סאקורה סייבר",
+        Color(0xFF120E16), Color(0xFF19131F), Color(0xFF33253C), Color(0xFFFF1493),
+        Color(0xFFCE3A8C), Color(0xFFFFD700), Color(0xFFFF4520), Color(0xFF241A2D),
+        Color(0xFFFAE6FA), Color(0xFFAAA0AF)
+    ),
+    ROYAL_AMBER(
+        "זהב מלכותי",
+        Color(0xFF121212), Color(0xFF1B1B1B), Color(0xFF302B21), Color(0xFFFFC000),
+        Color(0xFFDAA520), Color(0xFFF4A460), Color(0xFFE05051), Color(0xFF24221E),
+        Color(0xFFF5F0E1), Color(0xFFA89F8B)
+    )
+}
+
 object PyColors {
-    val DeepSlate = Color(0xFF0F1015)
-    val PanelDark = Color(0xFF16171F)
-    val BorderDark = Color(0xFF2E313D)
-    val NeonTeal = Color(0xFF00FFCC)
-    val LogoBlue = Color(0xFF457B9D)
-    val CodeYellow = Color(0xFFFFD166)
-    val ErrorRed = Color(0xFFFF5C5C)
-    val CardBackground = Color(0xFF222531)
-    val TextLight = Color(0xFFE2E4E9)
-    val TextMuted = Color(0xFF9095A6)
+    var activeTheme = mutableStateOf(ThemeStyle.NEON_TEAL)
+
+    val DeepSlate: Color get() = activeTheme.value.deepSlate
+    val PanelDark: Color get() = activeTheme.value.panelDark
+    val BorderDark: Color get() = activeTheme.value.borderDark
+    val NeonTeal: Color get() = activeTheme.value.neonTeal
+    val LogoBlue: Color get() = activeTheme.value.logoBlue
+    val CodeYellow: Color get() = activeTheme.value.codeYellow
+    val ErrorRed: Color get() = activeTheme.value.errRed
+    val CardBackground: Color get() = activeTheme.value.cardBackground
+    val TextLight: Color get() = activeTheme.value.textLight
+    val TextMuted: Color get() = activeTheme.value.textMuted
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -146,11 +187,14 @@ fun PyStudioApp(
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
+                databaseEnabled = true
                 allowFileAccess = true
                 allowContentAccess = true
                 allowFileAccessFromFileURLs = true
                 allowUniversalAccessFromFileURLs = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                cacheMode = WebSettings.LOAD_DEFAULT
+                userAgentString = "Mozilla/5.0 (Linux; Android 13; Nothing Phone 2a) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
             }
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -242,7 +286,12 @@ fun PyStudioApp(
                 }
             }, "AndroidBridge")
 
-            loadUrl("file:///android_asset/pyodide_runner.html")
+            try {
+                val htmlContent = context.assets.open("pyodide_runner.html").bufferedReader().use { it.readText() }
+                loadDataWithBaseURL("https://pyodide-engine.com", htmlContent, "text/html", "UTF-8", null)
+            } catch (e: Exception) {
+                loadUrl("file:///android_asset/pyodide_runner.html")
+            }
         }
     }
 
@@ -325,7 +374,8 @@ fun PyStudioApp(
                     Triple(1, "קנווס", Icons.Default.ArtTrack),
                     Triple(2, "מסוף", Icons.Default.Terminal),
                     Triple(3, "ספריות", Icons.Default.Dataset),
-                    Triple(4, "הליפר AI", Icons.Default.Assistant)
+                    Triple(4, "הליפר AI", Icons.Default.Assistant),
+                    Triple(5, "מעבדה", Icons.Default.Science)
                 )
                 menuTabs.forEach { (tabId, label, icon) ->
                     NavigationBarItem(
@@ -372,6 +422,7 @@ fun PyStudioApp(
                         2 -> TerminalLogsScreen(viewModel = viewModel)
                         3 -> LibraryPackageManagerScreen(viewModel = viewModel)
                         4 -> GeminiAssistantScreen(viewModel = viewModel)
+                        5 -> ExperimentalLabScreen(viewModel = viewModel)
                     }
                 }
             }
@@ -1393,6 +1444,380 @@ fun GeminiAssistantScreen(viewModel: PythonWorkspaceViewModel) {
                     .testTag("send_ai_message_button")
             ) {
                 Icon(imageVector = Icons.Default.Send, contentDescription = "Send", tint = PyColors.DeepSlate)
+            }
+        }
+    }
+}
+
+// Experimental Lab and Game Challenges HUB
+data class LabRiddle(
+    val title: String,
+    val text: String,
+    val options: List<String>,
+    val correctIdx: Int,
+    val explanation: String
+)
+
+@Composable
+fun ExperimentalLabScreen(viewModel: PythonWorkspaceViewModel) {
+    var quizIndex by remember { mutableStateOf(0) }
+    var score by remember { mutableStateOf(0) }
+    var selectedOption by remember { mutableStateOf<Int?>(null) }
+    var isSubmitted by remember { mutableStateOf(false) }
+    var benchmarkResult by remember { mutableStateOf("") }
+    var isBenchmarking by remember { mutableStateOf(false) }
+
+    val riddles = remember {
+        listOf(
+            LabRiddle(
+                title = "אתגר 1: חיתוך רשימות (Slicing)",
+                text = "מה יהיה הפלט של הקוד הבא בפייתון?\n\nnums = [1, 2, 3, 4, 5]\nprint(nums[::-2])",
+                options = listOf("[5, 3, 1]", "[1, 3, 5]", "[5, 4]", "[2, 4]"),
+                correctIdx = 0,
+                explanation = "חיתוך באמצעות השמטה של התחלה וסוף ומתן צעד (step) שלילי של -2 מתחיל מהאיבר האחרון (5) ומדלג במרווחים של 2 אחורה, לכן הפלט הוא [5, 3, 1]."
+            ),
+            LabRiddle(
+                title = "אתגר 2: השוואת זהות (Identity vs Equality)",
+                text = "נתון הקוד הבא:\n\na = [1, 2]\nb = [1, 2]\nprint(a == b, a is b)\n\nמה יודפס בקונסול?",
+                options = listOf("True True", "True False", "False True", "False False"),
+                correctIdx = 1,
+                explanation = "האופרטור == בודק שוויון ערכים (שניהם תואמים), לכן מחזיר True. לעומת זאת, האופרטור is בודק זהות זיכרון (האם הם אותו אובייקט). מכיוון שנוצרו שתי רשימות נפרדות, זה מחזיר False."
+            ),
+            LabRiddle(
+                title = "אתגר 3: כפל מחרוזות ומספרים",
+                text = "מה יהיה פלט הרצת הקוד הבא בפייתון?\n\nprint(\"2\" * 3 + \"3\")",
+                options = listOf("9", "2223", "3332", "Calculative Error"),
+                correctIdx = 1,
+                explanation = "כפל של מחרוזת פייתון במספר יוצר חזרה על המחרוזת: \"2\" כפול 3 מחזיר \"222\". לזה מתווספת המחרוזת \"3\" בשרשור קלאסי ומתקבל \"2223\"."
+            ),
+            LabRiddle(
+                title = "אתגר 4: התנהגות מילונים דינמיים",
+                text = "מה יהיה אורך המילון המודפס בסוף הקוד הבא?\n\nd = {1: 'a', True: 'b', 1.0: 'c'}\nprint(len(d))",
+                options = listOf("1", "3", "2", "Type Error"),
+                correctIdx = 0,
+                explanation = "בפייתון, True מתנהג כערך של 1, ו- 1.0 שווה ערך ל- 1. מכיוון שה- hash שלהם זהה והם שווים זה לזה, הם כותבים מחדש על אותו המפתח, לכן אורך המילון נותר 1 בלבד!"
+            )
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Core Section 1: Dashboard and Dynamic Themes
+        Text(
+            "🎨 מחליף ערכות נושא דינמי (בלייב)",
+            color = PyColors.NeonTeal,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+        
+        Text(
+            "התאימו את צבעי ה-IDE שלכם לסטייל המועדף עליכם ברגע אחד:",
+            color = PyColors.TextMuted,
+            fontSize = 12.sp
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ThemeStyle.values().forEach { style ->
+                val isSelected = PyColors.activeTheme.value == style
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { PyColors.activeTheme.value = style },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) PyColors.BorderDark else PyColors.PanelDark
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = 1.5.dp,
+                        color = if (isSelected) PyColors.NeonTeal else Color.Transparent
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .background(style.neonTeal, CircleShape)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = style.nameHeb,
+                            color = if (isSelected) PyColors.NeonTeal else PyColors.TextLight,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+        androidx.compose.material3.HorizontalDivider(color = PyColors.BorderDark, thickness = 1.dp)
+
+        // Core Section 2: Gamified Offline Python Quizzes
+        Text(
+            "🏆 שעשועון פייתון לימודי (מצב אופליין)",
+            color = PyColors.CodeYellow,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = PyColors.PanelDark),
+            border = androidx.compose.foundation.BorderStroke(1.dp, PyColors.BorderDark)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                if (quizIndex < riddles.size) {
+                    val currentRiddle = riddles[quizIndex]
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = currentRiddle.title,
+                            color = PyColors.NeonTeal,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "ניקוד: $score",
+                            color = PyColors.CodeYellow,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    Text(
+                        text = currentRiddle.text,
+                        color = PyColors.TextLight,
+                        fontSize = 12.sp,
+                        style = TextStyle(lineHeight = 18.sp),
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(PyColors.DeepSlate, RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // Answers
+                    currentRiddle.options.forEachIndexed { optIdx, option ->
+                        val isSelected = selectedOption == optIdx
+                        val buttonColor = if (isSubmitted) {
+                            if (optIdx == currentRiddle.correctIdx) Color(0xFF2E7D32) // Green correct
+                            else if (isSelected) Color(0xFFC62828) // Red incorrect
+                            else PyColors.BorderDark
+                        } else {
+                            if (isSelected) PyColors.NeonTeal else PyColors.BorderDark
+                        }
+                        
+                        val textColor = if (isSubmitted && (optIdx == currentRiddle.correctIdx || isSelected)) {
+                            Color.White
+                        } else if (isSelected) {
+                            PyColors.DeepSlate
+                        } else {
+                            PyColors.TextLight
+                        }
+
+                        Button(
+                            onClick = {
+                                if (!isSubmitted) {
+                                    selectedOption = optIdx
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = buttonColor,
+                                contentColor = textColor
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            enabled = !isSubmitted || isSelected || optIdx == currentRiddle.correctIdx
+                        ) {
+                            Text(text = option, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    if (isSubmitted) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (selectedOption == currentRiddle.correctIdx) Color(0xFF1E4620) else Color(0xFF421D1D)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = if (selectedOption == currentRiddle.correctIdx) "🎉 תשובה נכונה! (+25 נקודות)" else "❌ תשובה לא נכונה!",
+                                    color = if (selectedOption == currentRiddle.correctIdx) Color(0xFF81C784) else Color(0xFFE57373),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = currentRiddle.explanation,
+                                    color = PyColors.TextLight,
+                                    fontSize = 11.sp,
+                                    style = TextStyle(lineHeight = 16.sp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                isSubmitted = false
+                                selectedOption = null
+                                quizIndex++
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PyColors.NeonTeal, contentColor = PyColors.DeepSlate),
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("הבא")
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                if (selectedOption != null) {
+                                    isSubmitted = true
+                                    if (selectedOption == currentRiddle.correctIdx) {
+                                        score += 25
+                                    }
+                                }
+                            },
+                            enabled = selectedOption != null,
+                            colors = ButtonDefaults.buttonColors(containerColor = PyColors.CodeYellow, contentColor = PyColors.DeepSlate),
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("בדוק תשובה")
+                        }
+                    }
+                } else {
+                    // Quiz finished!
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth().padding(12.dp)
+                    ) {
+                        Text("👑 השעשועון הושלם בהצלחה!", color = PyColors.NeonTeal, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("הניקוד הסופי שלך הוא: $score מתוך 100", color = PyColors.TextLight, fontSize = 13.sp)
+                        val rank = when {
+                            score >= 100 -> "מאסטר פייתון מדופלם! 🏆"
+                            score >= 75 -> "מפתח פייתון מתקדם! 🚀"
+                            else -> "לומד פייתון נחוש! 🌱"
+                        }
+                        Text("דרגת למידה: $rank", color = PyColors.CodeYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = {
+                                quizIndex = 0
+                                score = 0
+                                selectedOption = null
+                                isSubmitted = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PyColors.NeonTeal, contentColor = PyColors.DeepSlate)
+                        ) {
+                            Text("שחק שוב")
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+        androidx.compose.material3.HorizontalDivider(color = PyColors.BorderDark, thickness = 1.dp)
+
+        // Core Section 3: High Performance WebWasm Benchmarker
+        Text(
+            "⚡ מעריך ביצועים ניסיוני (Benchmark Profiler)",
+            color = PyColors.ErrorRed,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = PyColors.PanelDark),
+            border = androidx.compose.foundation.BorderStroke(1.dp, PyColors.BorderDark)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "בצעו הערכת ביצועי חישוב של המכשיר שלך על ידי מציאת כל המספרים הראשוניים עד 50,000!",
+                    color = PyColors.TextMuted,
+                    fontSize = 11.sp,
+                    style = TextStyle(lineHeight = 16.sp)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (isBenchmarking) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        CircularProgressIndicator(color = PyColors.NeonTeal, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("מחשב ומנתח ביצועי ליבה...", color = PyColors.TextMuted, fontSize = 11.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            isBenchmarking = true
+                            val t0 = System.currentTimeMillis()
+                            var count = 0
+                            for (num in 2..50000) {
+                                var isPrime = true
+                                val limit = kotlin.math.sqrt(num.toDouble()).toInt()
+                                for (div in 2..limit) {
+                                    if (num % div == 0) {
+                                        isPrime = false
+                                        break
+                                    }
+                                }
+                                if (isPrime) count++
+                            }
+                            val elapsed = System.currentTimeMillis() - t0
+                            benchmarkResult = "נמצאו $count מספרים ראשוניים.\nזמן ביצוע ליבת Kotlin בסביבה זו: $elapsed מילישניות!\nציון ביצוע מעבד מוערך: ${(100000.0 / (elapsed + 1)).toInt()} נקודות אופטימיזציה."
+                            isBenchmarking = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = PyColors.ErrorRed, contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("הפעל מבדק מהירות מעבד", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                if (benchmarkResult.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = benchmarkResult,
+                        color = PyColors.NeonTeal,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(PyColors.DeepSlate, RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    )
+                }
             }
         }
     }
