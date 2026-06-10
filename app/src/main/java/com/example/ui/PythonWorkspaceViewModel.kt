@@ -48,6 +48,7 @@ class PythonWorkspaceViewModel(application: Application) : AndroidViewModel(appl
 
     // UI state controllers
     var isNewFileDialogOpen by mutableStateOf(false)
+    var isRenameDialogOpen by mutableStateOf(false)
     var isPackageDialogOpen by mutableStateOf(false)
     var inputRequestPrompt by mutableStateOf<String?>(null)
     private var inputContinuation: ((String) -> Unit)? = null
@@ -384,6 +385,25 @@ except ValueError:
                         currentFileName = "main.py"
                         currentFileContent = ""
                     }
+                }
+            }
+        }
+    }
+
+    fun renameFile(oldName: String, newName: String) {
+        if (newName.isBlank() || oldName == newName) return
+        val sanitized = if (newName.endsWith(".py")) newName else "$newName.py"
+        viewModelScope.launch(Dispatchers.IO) {
+            val fileObj = repository.getFileByName(oldName)
+            if (fileObj != null) {
+                repository.deleteFileByName(oldName)
+                val renamedFile = fileObj.copy(name = sanitized, lastUpdated = System.currentTimeMillis())
+                repository.insertFile(renamedFile)
+                withContext(Dispatchers.Main) {
+                    if (currentFileName == oldName) {
+                        currentFileName = sanitized
+                    }
+                    isRenameDialogOpen = false
                 }
             }
         }

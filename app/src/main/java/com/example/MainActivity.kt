@@ -15,6 +15,8 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -146,6 +148,8 @@ fun PyStudioApp(
                 domStorageEnabled = true
                 allowFileAccess = true
                 allowContentAccess = true
+                allowFileAccessFromFileURLs = true
+                allowUniversalAccessFromFileURLs = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             }
             webViewClient = object : WebViewClient() {
@@ -452,6 +456,49 @@ fun PyStudioApp(
                     containerColor = PyColors.PanelDark
                 )
             }
+
+            // Rename Program Modal Dialog
+            if (viewModel.isRenameDialogOpen) {
+                var renameValue by remember { mutableStateOf(viewModel.currentFileName) }
+                AlertDialog(
+                    onDismissRequest = { viewModel.isRenameDialogOpen = false },
+                    title = { Text("שינוי שם קובץ פייתון", color = PyColors.TextLight) },
+                    text = {
+                        Column {
+                            Text("הכניסו שם קובץ מעודכן משופר:", color = PyColors.TextMuted)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = renameValue,
+                                onValueChange = { renameValue = it },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PyColors.NeonTeal,
+                                    unfocusedBorderColor = PyColors.BorderDark,
+                                    focusedTextColor = PyColors.TextLight,
+                                    unfocusedTextColor = PyColors.TextLight
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rename_file_input_field")
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { viewModel.renameFile(viewModel.currentFileName, renameValue) },
+                            colors = ButtonDefaults.buttonColors(containerColor = PyColors.NeonTeal, contentColor = PyColors.DeepSlate),
+                            modifier = Modifier.testTag("rename_file_confirm_button")
+                        ) {
+                            Text("שנה שם")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.isRenameDialogOpen = false }) {
+                            Text("ביטול", color = PyColors.TextMuted)
+                        }
+                    },
+                    containerColor = PyColors.PanelDark
+                )
+            }
         }
     }
 }
@@ -531,6 +578,19 @@ fun WorkspaceSubHeader(viewModel: PythonWorkspaceViewModel) {
         }
 
         Row {
+            // Rename quickbutton
+            IconButton(
+                onClick = { viewModel.isRenameDialogOpen = true },
+                modifier = Modifier.testTag("nav_rename_file_icon_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Rename File",
+                    tint = PyColors.CodeYellow,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
             // New File quickbutton
             IconButton(
                 onClick = { viewModel.isNewFileDialogOpen = true },
@@ -562,6 +622,62 @@ fun WorkspaceSubHeader(viewModel: PythonWorkspaceViewModel) {
     }
 }
 
+// Custom Python simple syntax linter
+fun validatePythonSyntax(code: String): String? {
+    val lines = code.split("\n")
+    val colonsKeywords = listOf("def", "for", "while", "if", "elif", "else", "try", "except", "class")
+    for (i in lines.indices) {
+        val trimmed = lines[i].trim()
+        if (trimmed.startsWith("#") || trimmed.isEmpty()) continue
+        
+        // Check for missing colons
+        for (kw in colonsKeywords) {
+            if (trimmed.startsWith("$kw ") || trimmed.startsWith("$kw:") || trimmed == kw) {
+                if (!trimmed.endsWith(":")) {
+                    if (!trimmed.endsWith("\\") && !trimmed.contains("import")) {
+                        return "שורה ${i + 1}: חסר נקודתיים (:) בסוף השורה של ה-$kw"
+                    }
+                }
+            }
+        }
+        
+        // Check for unmatched parentheses or brackets
+        var openParen = 0
+        var openBrack = 0
+        var openCurly = 0
+        for (char in trimmed) {
+            if (char == '(') openParen++
+            if (char == ')') openParen--
+            if (char == '[') openBrack++
+            if (char == ']') openBrack--
+            if (char == '{') openCurly++
+            if (char == '}') openCurly--
+        }
+        if (openParen != 0) return "שורה ${i + 1}: סוגריים עגולים ( ) לא סגורים כראוי"
+        if (openBrack != 0) return "שורה ${i + 1}: סוגריים מרובעים [ ] לא סגורים כראוי"
+        if (openCurly != 0) return "שורה ${i + 1}: סוגריים מסולסלים { } לא סגורים כראוי"
+    }
+    return null
+}
+
+@Composable
+fun RecipeItem(title: String, desc: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(containerColor = PyColors.BorderDark),
+        border = androidx.compose.foundation.BorderStroke(1.dp, PyColors.BorderDark)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(title, color = PyColors.NeonTeal, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(desc, color = PyColors.TextMuted, fontSize = 11.sp)
+        }
+    }
+}
+
 @Composable
 fun CodeEditorScreen(viewModel: PythonWorkspaceViewModel) {
     var contentState by remember(viewModel.currentFileName) {
@@ -578,6 +694,222 @@ fun CodeEditorScreen(viewModel: PythonWorkspaceViewModel) {
             .fillMaxSize()
             .background(PyColors.DeepSlate)
     ) {
+        // Advanced Toolbar Row (Linter & Sharing / Utility Hub)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Linter status indicator
+            val syntaxError = remember(contentState) { validatePythonSyntax(contentState) }
+            Row(
+                modifier = Modifier.weight(1f).padding(end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(
+                            if (syntaxError == null) Color(0xFF4CAF50) else Color(0xFFFFC107),
+                            CircleShape
+                        )
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = syntaxError ?: "תקינות סינטקס: הקוד מנוסח כראוי",
+                    color = if (syntaxError == null) Color(0xFF81C784) else Color(0xFFFFD54F),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+
+            // Quick Actions Hub
+            val context = LocalContext.current
+            val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+            var showRecipeDialog by remember { mutableStateOf(false) }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Snippet Recipe Shortcut
+                TextButton(
+                    onClick = { showRecipeDialog = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    colors = ButtonDefaults.textButtonColors(contentColor = PyColors.NeonTeal)
+                ) {
+                    Icon(imageVector = Icons.Default.Code, contentDescription = "Snippets", modifier = Modifier.size(15.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("קודים מוכנים", fontSize = 11.sp)
+                }
+
+                // Copy
+                IconButton(
+                    onClick = {
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(contentState))
+                        android.widget.Toast.makeText(context, "הקוד הועתק ללוח בהצלחה", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy", tint = PyColors.TextMuted, modifier = Modifier.size(15.dp))
+                }
+
+                // Share
+                IconButton(
+                    onClick = {
+                        try {
+                            val sendIntent = android.content.Intent().apply {
+                                action = android.content.Intent.ACTION_SEND
+                                putExtra(android.content.Intent.EXTRA_TEXT, contentState)
+                                type = "text/plain"
+                            }
+                            val shareIntent = android.content.Intent.createChooser(sendIntent, "שתף סקריפט פייתון")
+                            context.startActivity(shareIntent)
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "שגיאה בשיתוף הקובץ", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Share, contentDescription = "Share", tint = PyColors.TextMuted, modifier = Modifier.size(15.dp))
+                }
+            }
+
+            if (showRecipeDialog) {
+                AlertDialog(
+                    onDismissRequest = { showRecipeDialog = false },
+                    title = { Text("מאגר מתכוני קוד מוכנים לפייתון", color = PyColors.TextLight, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 300.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text("בחרו סניפט קוד להזרקה מיידית למסך העריכה:", color = PyColors.TextMuted, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Recipe 1 - Canvas Loop and math Art
+                            RecipeItem(
+                                title = "ציור מעגל צבעוני ומתמטי",
+                                desc = "פקודות קנווס פשוטות משולבות פונקציות טריגונומטריות (math.sin)",
+                                onClick = {
+                                    contentState = """import js_canvas
+import math
+import time
+
+js_canvas.setSize(400, 400)
+js_canvas.cls()
+js_canvas.rect(0, 0, 400, 400, "#080b10")
+
+print("מריץ ציור כוכב ציקלואידי...")
+cx = 200
+cy = 200
+
+for i in range(120):
+    t = i * 0.15
+    # חישוב רדיוס משתנה
+    r = 100 + 40 * math.sin(t * 5)
+    x = cx + r * math.cos(t)
+    y = cy + r * math.sin(t)
+    
+    js_canvas.circle(int(x), int(y), 4, "#ff007f" if i % 2 == 0 else "#00f3ff")
+    time.sleep(0.02)
+
+print("הציור המרהיב הושלם!")
+"""
+                                    showRecipeDialog = false
+                                }
+                            )
+
+                            // Recipe 2 - SymPy Calculation
+                            RecipeItem(
+                                title = "אלגברה סימבולית ונגזרות (SymPy)",
+                                desc = "חישוב נגזרת לפונקציה מתמטית sympy באופן דינמי",
+                                onClick = {
+                                    contentState = """import sympy
+print("מתחיל חישוב אלגברי מתקדם...")
+x = sympy.symbols('x')
+f = x**3 + 2*x**2 - 5*x + 10
+f_prime = sympy.diff(f, x)
+
+print(f"הפונקציה המקורית: f(x) = {f}")
+print(f"הנגזרת הראשונה: f'(x) = {f_prime}")
+print(f"ערך הנגזרת בנקודה x=2 הוא: {f_prime.subs(x, 2)}")
+"""
+                                    showRecipeDialog = false
+                                }
+                            )
+
+                            // Recipe 3 - NumPy stats
+                            RecipeItem(
+                                title = "ניתוח סטטיסטי בעזרת NumPy",
+                                desc = "חישוב ממוצע, חציון וסטיית תקן של מערך מספרים",
+                                onClick = {
+                                    contentState = """import numpy as np
+
+# הגדרת נתוני דגימה של ציוני כיתה
+scores = np.array([85, 92, 78, 90, 88, 76, 95, 89, 100, 82])
+
+print("--- דוח אנליזה סטטיסטית ---")
+print(f"ציונים: {scores}")
+print(f"ממוצע ציוני הכיתה: {np.mean(scores):.2f}")
+print(f"חציון: {np.median(scores)}")
+print(f"סטיית תקן: {np.std(scores):.2f}")
+print(f"הציון המקסימלי: {np.max(scores)}")
+print(f"הציון המינימלי: {np.min(scores)}")
+"""
+                                    showRecipeDialog = false
+                                }
+                            )
+
+                            // Recipe 4 - User Inputs & JSON parse
+                            RecipeItem(
+                                title = "קלט משתמש קלאסי והמרות JSON",
+                                desc = "שימוש בפונקציית input() הדינמית ופענוח JSON מובנה",
+                                onClick = {
+                                    contentState = """import json
+
+print("ברוכים הבאים למערכת רישום המוצרים בפייתון!")
+name = input("הקלידו שם מוצר חדש: ")
+price = input("הקלידו את מחיר המוצר בשקלים: ")
+
+try:
+    numeric_price = float(price)
+    discount = numeric_price * 0.9  # 10% הנחה
+    
+    # יצירת מילון והמרה ל-JSON string
+    product_dict = {
+        "item_name": name,
+        "original_price": numeric_price,
+        "discounted_price": discount
+    }
+    
+    json_data = json.dumps(product_dict, ensure_ascii=False, indent=4)
+    print("\n--- יצירת נתוני JSON מובנים ---")
+    print(json_data)
+except ValueError:
+    print("שגיאה: המחיר שהקלדתם אינו מספר תקין.")
+"""
+                                    showRecipeDialog = false
+                                }
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showRecipeDialog = false }) {
+                            Text("סגור", color = PyColors.NeonTeal)
+                        }
+                    },
+                    containerColor = PyColors.PanelDark
+                )
+            }
+        }
+
         Row(
             modifier = Modifier
                 .weight(1f)
